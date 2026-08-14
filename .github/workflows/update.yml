@@ -1,10 +1,8 @@
 name: Update notices
 
-# 청약 공고는 마감일 카운트다운이 핵심이라 날짜가 바뀌면 D-day도 바뀐다.
-# 하루 한 번, 아침에 갱신한다.
 on:
   schedule:
-    - cron: "20 21 * * *" # 06:20 KST (정각은 스케줄 트리거가 몰려 지연이 크다)
+    - cron: "20 21 * * *"
   workflow_dispatch:
 
 permissions:
@@ -29,8 +27,6 @@ jobs:
         with:
           node-version: "20"
 
-      # 수집 스크립트가 깨진 채로 돌면 커밋된 데이터를 덮어쓴 뒤에야 알게 된다.
-      # 받아오기 전에 먼저 막는다.
       - name: 테스트
         run: npm test
 
@@ -40,8 +36,6 @@ jobs:
           CHEONGYAK_API_KEY: ${{ secrets.CHEONGYAK_API_KEY }}
           CHEONGYAK_API_ENDPOINT: ${{ secrets.CHEONGYAK_API_ENDPOINT }}
 
-      # 지원금은 청약과 달리 마감이 없어 매일 바뀌지 않지만, 두 데이터를 따로
-      # 돌릴 만큼 호출량이 크지 않아(하루 22회) 같이 갱신한다.
       - name: 주거 지원금 수집
         run: node scripts/fetch-subsidy.mjs
         env:
@@ -52,8 +46,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # git diff는 아직 추적되지 않는 파일을 보지 못한다. docs/data가 처음
-          # 생기는 실행에서는 "변경사항 없음"으로 잘못 판단하므로 먼저 add한다.
           git add docs/data
           if git diff --cached --quiet; then
             echo "변경사항 없음, 커밋 생략"
@@ -71,8 +63,6 @@ jobs:
           echo "push 재시도 모두 실패"
           exit 1
 
-      # GITHUB_TOKEN으로 푸시한 커밋은 다른 워크플로를 트리거하지 않는다.
-      # 그래서 배포를 여기서 직접 한다.
       - name: Pages 설정
         uses: actions/configure-pages@v5
 

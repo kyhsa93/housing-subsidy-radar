@@ -10,9 +10,6 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const scriptPath = path.resolve(import.meta.dirname, "../scripts/fetch-cheongyak.mjs");
 
-// 청약홈 분양정보 서비스를 흉내내는 스텁. 오퍼레이션마다 접수일 필드와 날짜 표기가
-// 다른 게 이 스크립트에서 가장 깨지기 쉬운 지점이라, 실제 응답에서 확인한 필드
-// 이름과 표기를 그대로 쓴다.
 function startStub(handler) {
   const calls = [];
   const server = createServer((req, res) => {
@@ -39,7 +36,6 @@ function startStub(handler) {
 const ok = (data, totalCount = data.length) => ({ json: { currentCount: data.length, data, totalCount } });
 const empty = () => ok([]);
 
-/** 오늘로부터 n일 뒤. 마감 필터가 "오늘 기준"이라 고정 날짜를 쓸 수 없다. */
 function daysFromToday(n, { compact = false } = {}) {
   const today = new Date(`${new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date())}T00:00:00Z`);
   today.setUTCDate(today.getUTCDate() + n);
@@ -78,7 +74,6 @@ test("네 오퍼레이션을 모두 수집하고 각자의 접수일 필드를 �
             RCEPT_ENDDE: daysFromToday(5),
           },
         ]);
-      // 임의공급은 날짜를 "20260813"처럼 구분자 없이 준다.
       case "getOptLttotPblancDetail":
         return ok([
           {
@@ -90,7 +85,6 @@ test("네 오퍼레이션을 모두 수집하고 각자의 접수일 필드를 �
             SUBSCRPT_RCEPT_ENDDE: daysFromToday(3, { compact: true }),
           },
         ]);
-      // 무순위는 SUBSCRPT_*가 비고 GNRL_*만 채워져 오는 공고가 있다.
       case "getRemndrLttotPblancDetail":
         return ok([
           {
@@ -128,15 +122,11 @@ test("네 오퍼레이션을 모두 수집하고 각자의 접수일 필드를 �
 
     const byType = Object.fromEntries(payload.notices.map((n) => [n.type, n]));
     assert.equal(byType.apt.receiptEnd, daysFromToday(5));
-    // 구분자 없는 표기도 ISO로 맞춰서 저장돼야 한다.
     assert.equal(byType.arbitrary.receiptEnd, daysFromToday(3));
-    // SUBSCRPT_*가 비면 GNRL_*로 넘어간다.
     assert.equal(byType.remndr.receiptEnd, daysFromToday(2));
     assert.equal(byType.remndr.receiptStart, daysFromToday(1));
-    // 묶음 이름 대신 실제로 구분되는 세부 종류를 종류 필터 값으로 쓴다.
     assert.equal(byType.urbty.kind, "오피스텔");
 
-    // 마감 임박순 정렬.
     assert.deepEqual(
       payload.notices.map((n) => n.type),
       ["remndr", "arbitrary", "urbty", "apt"]
@@ -169,7 +159,6 @@ test("이미 마감된 공고와 마감일 없는 공고는 빼고 저장한다"
         HOUSE_SECD_NM: "APT",
         RCEPT_ENDDE: null,
       },
-      // 존재하지 않는 날짜는 날짜로 치지 않는다.
       {
         HOUSE_MANAGE_NO: "4",
         HOUSE_NM: "잘못된 날짜",
@@ -181,7 +170,6 @@ test("이미 마감된 공고와 마감일 없는 공고는 빼고 저장한다"
 
   try {
     const { payload } = await run(stub.base);
-    // 오늘 마감은 아직 신청할 수 있으므로 남긴다.
     assert.deepEqual(
       payload.notices.map((n) => n.name),
       ["오늘 마감"]
@@ -221,7 +209,6 @@ test("한 종류만 실패하면 그 종류의 직전 데이터를 살려둔다"
     const { payload } = await run(stub.base, { outDir: dir });
     assert.deepEqual(payload.staleSources, ["무순위·잔여세대"]);
     const names = payload.notices.map((n) => n.name);
-    // 실패한 종류만 직전 데이터를 유지하고, 성공한 종류는 새로 받은 것으로 갈아끼운다.
     assert.ok(names.includes("지난 무순위"));
     assert.ok(names.includes("새 APT"));
     assert.ok(!names.includes("지난 APT"));
@@ -248,7 +235,6 @@ test("인증 오류는 재시도하지 않고 바로 멈춘다", async () => {
   const stub = await startStub(() => ({ json: { code: -4, msg: "인증키가 유효하지 않습니다" } }));
   try {
     await assert.rejects(() => run(stub.base));
-    // 재시도했다면 오퍼레이션당 5회씩 호출됐을 것이다.
     assert.equal(stub.calls.length, 1);
   } finally {
     await stub.close();
@@ -259,7 +245,6 @@ test("서비스키를 다시 인코딩하지 않고 그대로 보낸다", async 
   const stub = await startStub(() => empty());
   try {
     await run(stub.base, { env: { CHEONGYAK_API_KEY: "abc+def%2Fghi==" } });
-    // 공공데이터포털 키에는 이미 인코딩이 들어 있어서 한 번 더 인코딩되면 서명이 깨진다.
     assert.equal(stub.calls[0].serviceKey, "abc def/ghi==");
   } finally {
     await stub.close();

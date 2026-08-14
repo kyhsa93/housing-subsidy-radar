@@ -1,8 +1,3 @@
-// 정부24 공공서비스(보조금24) 중 주거 관련만 추려 docs/data/subsidy.json에 쓴다.
-//
-// 청약과 달리 마감 카운트다운을 붙이지 않는다. `신청기한`이 날짜인 경우가
-// 100건 중 5건뿐이고 나머지는 "상시신청", "연초 모집공고에 따름" 같은 문장이라
-// D-day를 셀 대상이 아니다. 대신 supportConditions의 자격 조건 코드로 거른다.
 
 import { writeFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -16,16 +11,11 @@ const API_KEY = process.env.SUBSIDY_API_KEY;
 const API_BASE = process.env.SUBSIDY_API_ENDPOINT;
 const SERVICE = "gov24/v3";
 
-// perPage는 1000이 상한이다(5000을 넣으면 data 없이 "정상"만 돌아온다).
-// 전체 약 11,000건이라 목록·조건 각각 11페이지면 받아진다.
 const PER_PAGE = 1000;
 const MAX_PAGES = 20;
 
-// 분야만 보면 놓치고(“긴급복지 주거지원”은 분야가 생활안정) 낱말만 보면
-// 오탐이 붙는다(“수산장비 임대”, “청년어촌정착지원”). 둘을 합쳐서 거른다.
 const HOUSING_FIELD = "주거·자립";
 const HOUSING_WORDS = /주택|주거|전세|월세|임대주택|매입임대|보금자리|집수리|이사비|주거급여|기숙사|전월세/;
-// "임차"는 뺐다. 화훼 기자재 임차, 농지 임대료처럼 주거와 무관한 곳에 더 많이 붙는다.
 const NON_HOUSING_WORDS = /수산|어업|어촌|어선|선박|농기계|농기구|농지|농산물|화훼|과원|과수|축사|기자재|장비\s?임대|점포|사무실/;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,8 +56,6 @@ function normalizeBase(name, value) {
 }
 
 async function fetchPage(base, endpoint, page) {
-  // serviceKey는 raw로 붙인다. 공공데이터포털 키에는 이미 인코딩이 들어 있어서
-  // URLSearchParams로 넣으면 한 번 더 인코딩돼 서명이 깨진다.
   const url = `${base}/${SERVICE}/${endpoint}?serviceKey=${API_KEY}&page=${page}&perPage=${PER_PAGE}`;
 
   let res;
@@ -114,7 +102,6 @@ async function fetchAll(base, endpoint) {
 
 function clean(value) {
   if (typeof value !== "string") return null;
-  // 지원내용·지원대상은 줄바꿈과 ○, - 기호가 섞인 긴 글이라 공백만 정리한다.
   const trimmed = value.replace(/\s+/g, " ").trim();
   return trimmed === "" ? null : trimmed;
 }
@@ -125,17 +112,6 @@ function isHousing(row) {
   return HOUSING_WORDS.test(haystack) && !NON_HOUSING_WORDS.test(haystack);
 }
 
-/**
- * 대상 구분 코드(JA0101~JA2299)는 저장하지 않는다.
- *
- * 803건에 대해 세어 보니 장애인 60%, 대학생 56%, 근로자 56%, 다자녀 47% 식으로
- * 모든 항목이 절반 안팎에서 Y였다. "공공분양 주택공급"이 임산부·출산·근로자·
- * 구직자·대학생·장애인·보훈 전부 Y인 데서 보이듯, 이 값은 "그 대상에게 주는
- * 지원"이 아니라 "그 대상을 배제하지 않음"이라서 걸러내는 데 쓸 수가 없다.
- * (무주택세대 JA0412도 550/1000으로 같은 성격이었다.)
- *
- * 실제로 변별되는 건 연령 범위와 소득 구간뿐이라 그 둘만 남긴다.
- */
 const INCOME_BRACKETS = [
   ["JA0201", "0~50%"],
   ["JA0202", "51~75%"],
@@ -144,22 +120,17 @@ const INCOME_BRACKETS = [
   ["JA0205", "200% 초과"],
 ];
 
-// 주거 지원금은 775건 중 636건이 지자체 사업이라(시군구 496, 광역시도 140)
-// 사는 지역으로 거르지 못하면 목록이 사실상 안 좁혀진다. 소관기관명이
-// "경상남도 사천시", "서울특별시 송파구"처럼 시도로 시작해서 그걸 쓴다.
 const REGIONS = [
   "서울특별시", "부산광역시", "대구광역시", "인천광역시", "대전광역시", "울산광역시",
   "세종특별자치시", "경기도", "강원특별자치도", "충청북도", "충청남도",
   "전북특별자치도", "전라남도", "광주광역시", "전남광주통합특별시",
   "경상북도", "경상남도", "제주특별자치도",
 ];
-// "대구도시개발공사"처럼 시도명이 앞에 붙기만 한 기관도 있어서 접두어로도 본다.
 const REGION_PREFIXES = REGIONS.map((name) => ({ name, prefix: name.replace(/(특별자치도|특별자치시|특별시|광역시|도)$/, "") }))
   .sort((a, b) => b.prefix.length - a.prefix.length);
 
 function regionOf(row) {
   const type = clean(row["소관기관유형"]);
-  // 중앙부처·공공기관 사업은 어디 살든 신청할 수 있다.
   if (type === "중앙행정기관" || type === "공공기관") return "전국";
 
   const agency = clean(row["소관기관명"]) ?? "";
@@ -179,18 +150,15 @@ function conditionsOf(row) {
   const income = INCOME_BRACKETS.filter(([code]) => row[code] === "Y").map(([, label]) => label);
   const ageFrom = toNumberOrNull(row.JA0110);
   const ageTo = toNumberOrNull(row.JA0111);
-  // 0~120은 "제한 없음"을 그렇게 적어둔 것이라 나이 조건으로 치지 않는다.
   const ageLimited = ageFrom !== null && ageTo !== null && !(ageFrom <= 0 && ageTo >= 120);
 
   return {
-    // 모든 구간이 Y면 소득 제한이 없다는 뜻이라 표시할 값이 없다.
     income: income.length === INCOME_BRACKETS.length ? [] : income,
     ageFrom: ageLimited ? ageFrom : null,
     ageTo: ageLimited ? ageTo : null,
   };
 }
 
-/** 목록에 싣기엔 긴 글이라 앞부분만 남긴다. 전문은 상세조회URL로 보낸다. */
 function excerpt(value, limit) {
   const text = clean(value);
   if (!text) return null;
@@ -218,11 +186,9 @@ async function main() {
       summary: excerpt(row["서비스목적요약"], 200),
       field: clean(row["서비스분야"]),
       target: excerpt(row["지원대상"], 200),
-      // 선정기준은 조례·고시를 그대로 옮겨둔 경우가 많아 목록에서는 뺀다.
       content: excerpt(row["지원내용"], 300),
       supportType: clean(row["지원유형"]),
       applyMethod: clean(row["신청방법"]),
-      // 날짜가 아니라 문장인 경우가 대부분이라 그대로 보여준다.
       deadline: clean(row["신청기한"]),
       agency: clean(row["소관기관명"]),
       agencyType: clean(row["소관기관유형"]),
@@ -234,8 +200,6 @@ async function main() {
     };
   });
 
-  // 상시로 열려 있는 것이 대부분이라 마감순 정렬이 불가능하다. 소관기관 유형이
-  // 중앙행정기관인 쪽이 대체로 규모가 크므로 그것을 앞에 두고 이름순으로 묶는다.
   items.sort((a, b) => {
     const rank = (item) => (item.agencyType === "중앙행정기관" ? 0 : 1);
     return rank(a) - rank(b) || (a.name ?? "").localeCompare(b.name ?? "", "ko");
@@ -266,7 +230,6 @@ async function main() {
       updatedAt: new Date().toISOString(),
       total: services.length,
       fields: [...new Set(items.map((i) => i.field).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko")),
-      // "전국"을 맨 앞에 두고 나머지는 가나다순. 지역 선택의 기본값 역할을 한다.
       regions: [
         ...(items.some((i) => i.region === "전국") ? ["전국"] : []),
         ...[...new Set(items.map((i) => i.region).filter((r) => r && r !== "전국"))].sort((a, b) => a.localeCompare(b, "ko")),

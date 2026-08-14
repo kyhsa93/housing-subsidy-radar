@@ -1,7 +1,3 @@
-// 청약홈 분양정보를 받아 마감이 남은 공고만 docs/data/cheongyak.json에 쓴다.
-//
-// 이 사이트의 목적이 "언제까지 신청할 수 있는가"라서, 수집 단계에서 이미 끝난
-// 공고를 걸러내고 마감일 오름차순으로 정렬해 둔다.
 
 import { writeFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -12,25 +8,12 @@ const dataDir = process.env.CHEONGYAK_OUT_DIR
 const outFile = path.join(dataDir, "cheongyak.json");
 
 const API_KEY = process.env.CHEONGYAK_API_KEY;
-// 시크릿에는 https://api.odcloud.kr/api 까지만 들어 있다. 서비스 경로와 오퍼레이션은
-// 코드가 붙인다 - 같은 시크릿으로 odcloud의 다른 API도 쓸 수 있고, 오퍼레이션을
-// 바꿀 때 시크릿을 건드리지 않아도 된다.
 const API_BASE = process.env.CHEONGYAK_API_ENDPOINT;
 const SERVICE = "ApplyhomeInfoDetailSvc/v1";
 
 const PER_PAGE = 500;
-// totalCount를 그대로 믿고 돌다가 응답이 이상하면 하루치 호출을 다 태울 수 있다.
 const MAX_PAGES = 30;
 
-/**
- * 오퍼레이션마다 응답 스키마가 다르다. APT는 순위별 접수일이 따로 있고 통합
- * 접수일(RCEPT_ENDDE)을 주는데, 나머지는 그 필드가 아예 없고 SUBSCRPT_RCEPT_*를
- * 쓴다. 임의공급·무순위는 SUBSCRPT_RCEPT_*와 GNRL_RCEPT_*를 둘 다 내려보내고
- * 공고에 따라 한쪽만 채워져 있어서, 그래서 receiptStart/End를 단일 필드가 아니라
- * 우선순위 목록으로 둔다 — 먼저 채워진 쪽을 접수 창구로 본다.
- *
- * 날짜 표기도 오퍼레이션마다 갈린다("2026-08-24" vs "20260813"). toIsoDate가 둘 다 받는다.
- */
 const SOURCES = [
   {
     type: "apt",
@@ -59,9 +42,6 @@ const SOURCES = [
     label: "오피스텔·도시형",
     receiptStart: ["SUBSCRPT_RCEPT_BGNDE"],
     receiptEnd: ["SUBSCRPT_RCEPT_ENDDE"],
-    // 이 오퍼레이션의 HOUSE_SECD_NM은 "도시형/오피스텔/생활숙박시설/민간임대"라는
-    // 묶음 이름이라 종류 필터로 쓰면 넷이 한 칸에 뭉친다. 실제로 구분되는 건
-    // HOUSE_DTL_SECD_NM("오피스텔", "도시형생활주택", ...) 쪽이다.
     kindFields: ["HOUSE_DTL_SECD_NM", "HOUSE_SECD_NM"],
   },
 ];
@@ -72,13 +52,11 @@ function kstToday() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 }
 
-/** "2026-08-24"와 "20260813" 두 표기를 모두 YYYY-MM-DD로 맞춘다. */
 function toIsoDate(value) {
   if (typeof value !== "string") return null;
   const digits = value.replace(/\D/g, "");
   if (digits.length !== 8) return null;
   const iso = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
-  // 잘못된 날짜(20260231 등)를 걸러낸다.
   const parsed = new Date(`${iso}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime()) || !parsed.toISOString().startsWith(iso)) return null;
   return iso;
@@ -104,7 +82,6 @@ function normalizeBase(name, value) {
   return trimmed;
 }
 
-/** 다시 시도해도 결과가 같은 실패로 표시한다(인증 오류 등). */
 function fatal(err) {
   err.fatal = true;
   return err;
@@ -128,15 +105,12 @@ async function withRetry(label, fn, attempts = 5) {
 }
 
 async function fetchPage(base, operation, page) {
-  // serviceKey는 URLSearchParams에 넣지 않는다. 공공데이터포털 키에는 이미
-  // %2B 같은 인코딩이 들어 있어서 한 번 더 인코딩되면 서명이 깨진다.
   const url = `${base}/${SERVICE}/${operation}?serviceKey=${API_KEY}&page=${page}&perPage=${PER_PAGE}`;
 
   let res;
   try {
     res = await fetch(url, { headers: { "User-Agent": "housing-subsidy-radar/1.0" } });
   } catch (err) {
-    // undici는 DNS 실패든 TLS 오류든 "fetch failed" 한 줄만 던진다.
     const cause = err.cause?.message ?? err.cause?.code ?? "원인 불명";
     throw new Error(`${operation} p${page} 요청 실패: ${err.message} (${cause})`);
   }
@@ -149,8 +123,6 @@ async function fetchPage(base, operation, page) {
     throw new Error(`${operation} p${page}: JSON 아님 (http ${res.status}) ${text.slice(0, 200)}`);
   }
 
-  // odcloud는 인증키 문제를 code -4, 없는 서비스를 -3으로 알려준다. 둘 다
-  // 다시 불러도 같은 답이 오므로 재시도하지 않는다.
   if (typeof json.code === "number" && json.code < 0) {
     throw fatal(new Error(`API 오류 ${json.code}: ${json.msg ?? ""}`.trim()));
   }
@@ -179,7 +151,6 @@ async function fetchAll(base, source) {
   return rows;
 }
 
-/** 우선순위 목록에서 처음으로 날짜로 읽히는 값을 고른다. */
 function pickDate(row, fields) {
   for (const field of fields) {
     const iso = toIsoDate(row[field]);
@@ -202,7 +173,6 @@ function normalize(row, source) {
     id: `${source.type}:${clean(row.HOUSE_MANAGE_NO) ?? clean(row.PBLANC_NO) ?? ""}`,
     type: source.type,
     name: clean(row.HOUSE_NM),
-    // APT는 "APT"/"민영" 같은 세부 구분이 더 있고 임의공급은 HOUSE_SECD_NM만 있다.
     kind: pickText(row, source.kindFields ?? ["HOUSE_SECD_NM"]),
     detailKind: clean(row.HOUSE_DTL_SECD_NM),
     rentKind: clean(row.RENT_SECD_NM),
@@ -214,7 +184,6 @@ function normalize(row, source) {
     noticeDate: toIsoDate(row.RCRIT_PBLANC_DE),
     receiptStart: pickDate(row, source.receiptStart),
     receiptEnd,
-    // 특별공급은 APT에만 있다(임의공급은 항상 null).
     specialStart: toIsoDate(row.SPSPLY_RCEPT_BGNDE),
     specialEnd: toIsoDate(row.SPSPLY_RCEPT_ENDDE),
     winnerDate: toIsoDate(row.PRZWNER_PRESNATN_DE),
@@ -237,7 +206,6 @@ async function main() {
     try {
       const rows = await fetchAll(base, source);
       const normalized = rows.map((row) => normalize(row, source)).filter((item) => item.name);
-      // 접수가 이미 끝난 공고는 뺀다. 마감일이 없는 공고도 카운트다운을 못 하니 뺀다.
       const open = normalized.filter((item) => item.receiptEnd && item.receiptEnd >= today);
       collected.push(...open);
       console.log(
@@ -255,14 +223,12 @@ async function main() {
     throw new Error("모든 공고 종류 수집 실패 - 기존 데이터를 덮어쓰지 않고 중단합니다");
   }
 
-  // 마감이 임박한 순. 같은 날이면 접수 시작이 빠른 쪽을 먼저 보여준다.
   collected.sort((a, b) => a.receiptEnd.localeCompare(b.receiptEnd) || (a.receiptStart ?? "").localeCompare(b.receiptStart ?? ""));
 
   let previous = {};
   try {
     previous = JSON.parse(await readFile(outFile, "utf-8"));
   } catch {
-    // 최초 실행
   }
 
   const payload = {
@@ -279,7 +245,6 @@ async function main() {
   console.log(`[fetch-cheongyak] 저장 완료 (${payload.notices.length}건, 기준일 ${today})`);
 }
 
-/** 한 종류가 실패하면 그 종류만 직전 데이터를 살려둔다. */
 function mergeWithPrevious(collected, previous, failedLabels) {
   const failedTypes = SOURCES.filter((s) => failedLabels.includes(s.label)).map((s) => s.type);
   const kept = (previous.notices ?? []).filter((n) => failedTypes.includes(n.type));
