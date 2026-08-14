@@ -1,75 +1,71 @@
-// 임시 탐색 스크립트. 보조금24(정부24 공공서비스) 응답이 어떻게 생겼는지
-// 확인하려고 만든 것이고, 수집 스크립트를 쓰고 나면 지운다.
+// 임시 탐색 스크립트. 주거 지원금을 어떻게 추려낼지 정하려고 만든 것이고,
+// 수집 스크립트를 쓰고 나면 지운다.
 //
-// 확인하려는 것은 하나다: `신청기한`이 날짜인가, 자유 텍스트인가.
-//   날짜면      → 청약과 같은 마감 D-day 목록에 합칠 수 있다
-//   자유 텍스트면 → 카운트다운이 불가능하니 조건 검색 쪽으로 가야 한다
-// 겸사겸사 supportConditions(자격 조건 코드)도 한 건 찍어본다.
+// 신청기한은 이미 확인했다: 100건 중 날짜형이 5건뿐이라 마감 카운트다운은
+// 불가능하고, supportConditions의 자격 조건 코드로 거르는 쪽이 맞다.
+//
+// 이번에 확인할 것:
+//   1. perPage 상한 (10,965건을 몇 번에 나눠 받아야 하는지)
+//   2. "서비스분야" 값 목록 - 주거 관련을 무엇으로 거를지
+//   3. supportConditions를 서비스ID 없이 통째로 받을 수 있는지
+//      (건별로 부르면 1만 번이라 하루 한도를 넘긴다)
 
 const KEY = process.env.SUBSIDY_API_KEY;
 const BASE = process.env.SUBSIDY_API_ENDPOINT;
-
-// api-docs 기준 basePath는 /api, 경로는 /gov24/v3/... 이다.
-// 시크릿에는 https://api.odcloud.kr/api 까지만 들어 있다.
 const SERVICE = "gov24/v3";
 
 async function get(path, params = {}) {
-  const query = new URLSearchParams({ page: "1", perPage: "5", ...params });
+  const query = new URLSearchParams({ page: "1", perPage: "10", ...params });
   const url = `${BASE.trim().replace(/\/+$/, "")}/${SERVICE}/${path}?serviceKey=${KEY}&${query}`;
   const res = await fetch(url, { headers: { "User-Agent": "housing-subsidy-radar/0.1" } });
   const text = await res.text();
   try {
     return { status: res.status, json: JSON.parse(text) };
   } catch {
-    return { status: res.status, text: text.slice(0, 400) };
+    return { status: res.status, text: text.slice(0, 300) };
   }
 }
 
 async function main() {
-  if (!KEY || !BASE) {
-    console.log("[explore] 보조금24 환경변수 없음");
-    return;
+  if (!KEY || !BASE) return console.log("[explore] 환경변수 없음");
+
+  console.log("=== perPage 상한 ===");
+  for (const perPage of ["1000", "5000", "10000"]) {
+    const r = await get("serviceList", { perPage });
+    const n = r.json?.data?.length;
+    console.log(`  perPage=${perPage} → http ${r.status}, 받은 건수 ${n ?? "-"} ${r.json?.msg ?? ""}`);
+    if (!n) break;
   }
 
-  const list = await get("serviceList", { perPage: "100" });
-  if (!list.json?.data) {
-    console.log("serviceList 실패:", list.status, JSON.stringify(list.json ?? list.text).slice(0, 300));
-    return;
-  }
-  console.log(`serviceList http ${list.status} / totalCount=${list.json.totalCount}`);
+  console.log("\n=== supportConditions 통째 조회 ===");
+  const cond = await get("supportConditions", { perPage: "1000" });
+  console.log(`  http ${cond.status} totalCount=${cond.json?.totalCount} 받은 건수=${cond.json?.data?.length ?? "-"}`);
 
-  const first = list.json.data[0];
-  console.log("\n=== 첫 건의 필드 ===");
-  for (const [k, v] of Object.entries(first)) {
-    console.log(`  ${k} = ${String(v).slice(0, 80)}`);
+  console.log("\n=== 서비스분야 분포 (1000건) ===");
+  const list = await get("serviceList", { perPage: "1000" });
+  const rows = list.json?.data ?? [];
+  const fields = {};
+  for (const row of rows) {
+    const key = String(row["서비스분야"] ?? "(없음)");
+    fields[key] = (fields[key] ?? 0) + 1;
   }
-
-  // 신청기한 값이 어떤 꼴인지가 기획을 가른다. 100건을 훑어서 분류해 본다.
-  console.log("\n=== 신청기한 값 분포 (100건) ===");
-  const buckets = { 날짜형: [], 상시형: [], 기타: [] };
-  for (const row of list.json.data) {
-    const raw = String(row["신청기한"] ?? "").trim();
-    if (/\d{4}[-.년]\s?\d{1,2}[-.월]\s?\d{1,2}/.test(raw)) buckets.날짜형.push(raw);
-    else if (/상시|연중|수시|예산|소진|기간\s?내|접수시|별도/.test(raw)) buckets.상시형.push(raw);
-    else buckets.기타.push(raw);
-  }
-  for (const [name, values] of Object.entries(buckets)) {
-    console.log(`  ${name}: ${values.length}건`);
-    for (const v of [...new Set(values)].slice(0, 6)) console.log(`     "${v.slice(0, 90)}"`);
+  for (const [k, v] of Object.entries(fields).sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(v).padStart(4)}  ${k}`);
   }
 
-  // 자격 조건 코드도 한 건 확인한다(무주택·다자녀·소득 구간 등).
-  const serviceId = first["서비스ID"];
-  const cond = await get("supportConditions", { "cond[서비스ID::EQ]": serviceId });
-  console.log(`\n=== supportConditions (서비스ID=${serviceId}) ===`);
-  const row = cond.json?.data?.[0];
-  if (!row) {
-    console.log("  없음:", JSON.stringify(cond.json ?? cond.text).slice(0, 200));
-  } else {
-    const set = Object.entries(row).filter(([k, v]) => k.startsWith("JA") && v && v !== "N");
-    console.log(`  전체 ${Object.keys(row).length}필드 중 값이 있는 조건 ${set.length}개`);
-    for (const [k, v] of set.slice(0, 20)) console.log(`    ${k} = ${v}`);
+  // 주거 관련을 이름으로 거르면 몇 건이나 되는지도 같이 본다.
+  const housingWords = /주택|주거|전세|월세|임대|보금자리|이사|정착|집수리|매입|기숙사/;
+  const byName = rows.filter((r) => housingWords.test(`${r["서비스명"]} ${r["서비스목적요약"] ?? ""}`));
+  console.log(`\n=== 이름·요약에 주거 낱말이 있는 건수: ${byName.length} / ${rows.length} ===`);
+  for (const r of byName.slice(0, 15)) {
+    console.log(`  [${r["서비스분야"]}] ${r["서비스명"]} (${r["소관기관명"]})`);
   }
+
+  // 무주택 조건(JA0412)이 붙은 서비스가 몇이나 되는지도 확인한다.
+  const conds = cond.json?.data ?? [];
+  const noHome = conds.filter((c) => c.JA0412 === "Y");
+  console.log(`\n=== supportConditions 표본 ${conds.length}건 중 무주택세대(JA0412) 조건: ${noHome.length}건 ===`);
+  for (const c of noHome.slice(0, 10)) console.log(`  ${c["서비스명"] ?? c["서비스ID"]}`);
 }
 
 await main();
