@@ -5,6 +5,6 @@
   "scripts": {
     "fetch:cheongyak": "node scripts/fetch-cheongyak.mjs",
     "fetch:subsidy": "node scripts/fetch-subsidy.mjs",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.mjs"
   }
 }
