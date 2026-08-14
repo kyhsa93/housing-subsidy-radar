@@ -24,8 +24,9 @@ const MAX_PAGES = 20;
 // 분야만 보면 놓치고(“긴급복지 주거지원”은 분야가 생활안정) 낱말만 보면
 // 오탐이 붙는다(“수산장비 임대”, “청년어촌정착지원”). 둘을 합쳐서 거른다.
 const HOUSING_FIELD = "주거·자립";
-const HOUSING_WORDS = /주택|주거|전세|월세|임대주택|매입임대|보금자리|집수리|이사비|주거급여|기숙사|전월세|임차/;
-const NON_HOUSING_WORDS = /수산|어업|어촌|어선|농기계|장비\s?임대|선박/;
+const HOUSING_WORDS = /주택|주거|전세|월세|임대주택|매입임대|보금자리|집수리|이사비|주거급여|기숙사|전월세/;
+// "임차"는 뺐다. 화훼 기자재 임차, 농지 임대료처럼 주거와 무관한 곳에 더 많이 붙는다.
+const NON_HOUSING_WORDS = /수산|어업|어촌|어선|선박|농기계|농기구|농지|농산물|화훼|과원|과수|축사|기자재|장비\s?임대|점포|사무실/;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -125,28 +126,16 @@ function isHousing(row) {
 }
 
 /**
- * 자격 조건 코드를 화면에서 쓸 수 있는 형태로 줄인다.
+ * 대상 구분 코드(JA0101~JA2299)는 저장하지 않는다.
  *
- * 무주택세대(JA0412)는 일부러 뺐다. 표본 1,000건 중 550건에 붙어 있어서
- * (유아학비, 근로장려금까지 Y) 거르는 데 아무 도움이 안 된다. "무주택자 전용"이
- * 아니라 "무주택세대도 대상"이라는 뜻이기 때문이다.
+ * 803건에 대해 세어 보니 장애인 60%, 대학생 56%, 근로자 56%, 다자녀 47% 식으로
+ * 모든 항목이 절반 안팎에서 Y였다. "공공분양 주택공급"이 임산부·출산·근로자·
+ * 구직자·대학생·장애인·보훈 전부 Y인 데서 보이듯, 이 값은 "그 대상에게 주는
+ * 지원"이 아니라 "그 대상을 배제하지 않음"이라서 걸러내는 데 쓸 수가 없다.
+ * (무주택세대 JA0412도 550/1000으로 같은 성격이었다.)
+ *
+ * 실제로 변별되는 건 연령 범위와 소득 구간뿐이라 그 둘만 남긴다.
  */
-const CONDITION_FLAGS = [
-  ["singleParent", "JA0403", "한부모·조손"],
-  ["singlePerson", "JA0404", "1인가구"],
-  ["multiChild", "JA0411", "다자녀"],
-  ["newResident", "JA0413", "신규 전입"],
-  ["pregnant", "JA0302", "임산부"],
-  ["birth", "JA0303", "출산·입양"],
-  ["worker", "JA0326", "근로자"],
-  ["jobSeeker", "JA0327", "구직자"],
-  ["student", "JA0320", "대학생"],
-  ["disabled", "JA0328", "장애인"],
-  ["veteran", "JA0329", "국가보훈"],
-  ["multicultural", "JA0401", "다문화"],
-  ["defector", "JA0402", "북한이탈주민"],
-];
-
 const INCOME_BRACKETS = [
   ["JA0201", "0~50%"],
   ["JA0202", "51~75%"],
@@ -162,18 +151,25 @@ function toNumberOrNull(value) {
 
 function conditionsOf(row) {
   if (!row) return null;
-  const flags = CONDITION_FLAGS.filter(([, code]) => row[code] === "Y").map(([key]) => key);
   const income = INCOME_BRACKETS.filter(([code]) => row[code] === "Y").map(([, label]) => label);
   const ageFrom = toNumberOrNull(row.JA0110);
   const ageTo = toNumberOrNull(row.JA0111);
+  // 0~120은 "제한 없음"을 그렇게 적어둔 것이라 나이 조건으로 치지 않는다.
+  const ageLimited = ageFrom !== null && ageTo !== null && !(ageFrom <= 0 && ageTo >= 120);
 
   return {
-    flags,
-    // 모든 소득 구간이 Y면 소득 제한이 없다는 뜻이라 표시할 값이 없다.
+    // 모든 구간이 Y면 소득 제한이 없다는 뜻이라 표시할 값이 없다.
     income: income.length === INCOME_BRACKETS.length ? [] : income,
-    ageFrom,
-    ageTo,
+    ageFrom: ageLimited ? ageFrom : null,
+    ageTo: ageLimited ? ageTo : null,
   };
+}
+
+/** 목록에 싣기엔 긴 글이라 앞부분만 남긴다. 전문은 상세조회URL로 보낸다. */
+function excerpt(value, limit) {
+  const text = clean(value);
+  if (!text) return null;
+  return text.length <= limit ? text : `${text.slice(0, limit)}…`;
 }
 
 async function main() {
@@ -194,11 +190,11 @@ async function main() {
     return {
       id,
       name: clean(row["서비스명"]),
-      summary: clean(row["서비스목적요약"]),
+      summary: excerpt(row["서비스목적요약"], 200),
       field: clean(row["서비스분야"]),
-      target: clean(row["지원대상"]),
-      criteria: clean(row["선정기준"]),
-      content: clean(row["지원내용"]),
+      target: excerpt(row["지원대상"], 200),
+      // 선정기준은 조례·고시를 그대로 옮겨둔 경우가 많아 목록에서는 뺀다.
+      content: excerpt(row["지원내용"], 300),
       supportType: clean(row["지원유형"]),
       applyMethod: clean(row["신청방법"]),
       // 날짜가 아니라 문장인 경우가 대부분이라 그대로 보여준다.
