@@ -29,6 +29,11 @@ jobs:
         with:
           node-version: "20"
 
+      # 수집 스크립트가 깨진 채로 돌면 커밋된 데이터를 덮어쓴 뒤에야 알게 된다.
+      # 받아오기 전에 먼저 막는다.
+      - name: 테스트
+        run: npm test
+
       - name: 청약 공고 수집
         run: node scripts/fetch-cheongyak.mjs
         env:

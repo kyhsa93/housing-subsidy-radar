@@ -1,4 +1,4 @@
-// 청약홈 분양정보(APT·임의공급)를 받아 마감이 남은 공고만 docs/data/cheongyak.json에 쓴다.
+// 청약홈 분양정보를 받아 마감이 남은 공고만 docs/data/cheongyak.json에 쓴다.
 //
 // 이 사이트의 목적이 "언제까지 신청할 수 있는가"라서, 수집 단계에서 이미 끝난
 // 공고를 걸러내고 마감일 오름차순으로 정렬해 둔다.
@@ -23,24 +23,46 @@ const PER_PAGE = 500;
 const MAX_PAGES = 30;
 
 /**
- * 두 오퍼레이션의 응답 스키마가 다르다. APT는 순위별 접수일이 따로 있고 통합
- * 접수일(RCEPT_ENDDE)을 주는데, 임의공급은 그 필드가 아예 없고 SUBSCRPT_RCEPT_*를
- * 쓴다. 날짜 표기도 APT는 "2026-08-24", 임의공급은 "20260813"으로 다르다.
+ * 오퍼레이션마다 응답 스키마가 다르다. APT는 순위별 접수일이 따로 있고 통합
+ * 접수일(RCEPT_ENDDE)을 주는데, 나머지는 그 필드가 아예 없고 SUBSCRPT_RCEPT_*를
+ * 쓴다. 임의공급·무순위는 SUBSCRPT_RCEPT_*와 GNRL_RCEPT_*를 둘 다 내려보내고
+ * 공고에 따라 한쪽만 채워져 있어서, 그래서 receiptStart/End를 단일 필드가 아니라
+ * 우선순위 목록으로 둔다 — 먼저 채워진 쪽을 접수 창구로 본다.
+ *
+ * 날짜 표기도 오퍼레이션마다 갈린다("2026-08-24" vs "20260813"). toIsoDate가 둘 다 받는다.
  */
 const SOURCES = [
   {
     type: "apt",
     operation: "getAPTLttotPblancDetail",
     label: "APT",
-    receiptStart: "RCEPT_BGNDE",
-    receiptEnd: "RCEPT_ENDDE",
+    receiptStart: ["RCEPT_BGNDE"],
+    receiptEnd: ["RCEPT_ENDDE"],
   },
   {
     type: "arbitrary",
     operation: "getOptLttotPblancDetail",
     label: "임의공급",
-    receiptStart: "SUBSCRPT_RCEPT_BGNDE",
-    receiptEnd: "SUBSCRPT_RCEPT_ENDDE",
+    receiptStart: ["SUBSCRPT_RCEPT_BGNDE", "GNRL_RCEPT_BGNDE"],
+    receiptEnd: ["SUBSCRPT_RCEPT_ENDDE", "GNRL_RCEPT_ENDDE"],
+  },
+  {
+    type: "remndr",
+    operation: "getRemndrLttotPblancDetail",
+    label: "무순위·잔여세대",
+    receiptStart: ["SUBSCRPT_RCEPT_BGNDE", "GNRL_RCEPT_BGNDE"],
+    receiptEnd: ["SUBSCRPT_RCEPT_ENDDE", "GNRL_RCEPT_ENDDE"],
+  },
+  {
+    type: "urbty",
+    operation: "getUrbtyOfctlLttotPblancDetail",
+    label: "오피스텔·도시형",
+    receiptStart: ["SUBSCRPT_RCEPT_BGNDE"],
+    receiptEnd: ["SUBSCRPT_RCEPT_ENDDE"],
+    // 이 오퍼레이션의 HOUSE_SECD_NM은 "도시형/오피스텔/생활숙박시설/민간임대"라는
+    // 묶음 이름이라 종류 필터로 쓰면 넷이 한 칸에 뭉친다. 실제로 구분되는 건
+    // HOUSE_DTL_SECD_NM("오피스텔", "도시형생활주택", ...) 쪽이다.
+    kindFields: ["HOUSE_DTL_SECD_NM", "HOUSE_SECD_NM"],
   },
 ];
 
@@ -157,14 +179,31 @@ async function fetchAll(base, source) {
   return rows;
 }
 
+/** 우선순위 목록에서 처음으로 날짜로 읽히는 값을 고른다. */
+function pickDate(row, fields) {
+  for (const field of fields) {
+    const iso = toIsoDate(row[field]);
+    if (iso) return iso;
+  }
+  return null;
+}
+
+function pickText(row, fields) {
+  for (const field of fields) {
+    const value = clean(row[field]);
+    if (value) return value;
+  }
+  return null;
+}
+
 function normalize(row, source) {
-  const receiptEnd = toIsoDate(row[source.receiptEnd]);
+  const receiptEnd = pickDate(row, source.receiptEnd);
   return {
     id: `${source.type}:${clean(row.HOUSE_MANAGE_NO) ?? clean(row.PBLANC_NO) ?? ""}`,
     type: source.type,
     name: clean(row.HOUSE_NM),
     // APT는 "APT"/"민영" 같은 세부 구분이 더 있고 임의공급은 HOUSE_SECD_NM만 있다.
-    kind: clean(row.HOUSE_SECD_NM),
+    kind: pickText(row, source.kindFields ?? ["HOUSE_SECD_NM"]),
     detailKind: clean(row.HOUSE_DTL_SECD_NM),
     rentKind: clean(row.RENT_SECD_NM),
     area: clean(row.SUBSCRPT_AREA_CODE_NM),
@@ -173,7 +212,7 @@ function normalize(row, source) {
     builder: clean(row.CNSTRCT_ENTRPS_NM) ?? clean(row.BSNS_MBY_NM),
     tel: clean(row.MDHS_TELNO),
     noticeDate: toIsoDate(row.RCRIT_PBLANC_DE),
-    receiptStart: toIsoDate(row[source.receiptStart]),
+    receiptStart: pickDate(row, source.receiptStart),
     receiptEnd,
     // 특별공급은 APT에만 있다(임의공급은 항상 null).
     specialStart: toIsoDate(row.SPSPLY_RCEPT_BGNDE),
