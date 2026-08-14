@@ -1,113 +1,75 @@
-// 임시 탐색 스크립트. 실제 응답이 어떻게 생겼는지 확인하려고 만든 것이고,
-// 수집 스크립트를 쓰고 나면 지운다.
+// 임시 탐색 스크립트. 보조금24(정부24 공공서비스) 응답이 어떻게 생겼는지
+// 확인하려고 만든 것이고, 수집 스크립트를 쓰고 나면 지운다.
 //
-// 확인하려는 것:
-//   1. 청약홈 APT/임의공급 응답의 필드 이름 (특히 접수 시작·마감일이 어느 필드인지)
-//   2. 보조금24 응답에 신청기한 필드가 있는지 - 이 답에 따라 기획이 갈린다
-//      (있으면 "마감 D-day 레이더", 없으면 "지원금 검색")
+// 확인하려는 것은 하나다: `신청기한`이 날짜인가, 자유 텍스트인가.
+//   날짜면      → 청약과 같은 마감 D-day 목록에 합칠 수 있다
+//   자유 텍스트면 → 카운트다운이 불가능하니 조건 검색 쪽으로 가야 한다
+// 겸사겸사 supportConditions(자격 조건 코드)도 한 건 찍어본다.
 
-const CHEONGYAK_KEY = process.env.CHEONGYAK_API_KEY;
-const CHEONGYAK_BASE = process.env.CHEONGYAK_API_ENDPOINT;
-const SUBSIDY_KEY = process.env.SUBSIDY_API_KEY;
-const SUBSIDY_BASE = process.env.SUBSIDY_API_ENDPOINT;
+const KEY = process.env.SUBSIDY_API_KEY;
+const BASE = process.env.SUBSIDY_API_ENDPOINT;
 
-// 시크릿에는 https://api.odcloud.kr/api 까지만 들어 있다. 서비스 경로와
-// 오퍼레이션은 코드가 붙인다 - 같은 시크릿으로 odcloud의 다른 API도 쓸 수 있게.
-const CHEONGYAK_SERVICE = "ApplyhomeInfoDetailSvc/v1";
+// api-docs 기준 basePath는 /api, 경로는 /gov24/v3/... 이다.
+// 시크릿에는 https://api.odcloud.kr/api 까지만 들어 있다.
+const SERVICE = "gov24/v3";
 
-const OPERATIONS = [
-  { key: "apt", operation: "getAPTLttotPblancDetail", label: "APT 분양정보" },
-  { key: "arbitrary", operation: "getOptLttotPblancDetail", label: "임의공급(추정)" },
-];
-
-async function fetchJson(url) {
+async function get(path, params = {}) {
+  const query = new URLSearchParams({ page: "1", perPage: "5", ...params });
+  const url = `${BASE.trim().replace(/\/+$/, "")}/${SERVICE}/${path}?serviceKey=${KEY}&${query}`;
   const res = await fetch(url, { headers: { "User-Agent": "housing-subsidy-radar/0.1" } });
   const text = await res.text();
   try {
     return { status: res.status, json: JSON.parse(text) };
   } catch {
-    return { status: res.status, text: text.slice(0, 600) };
+    return { status: res.status, text: text.slice(0, 400) };
   }
 }
 
-function describe(value, depth = 0) {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return `array(${value.length})`;
-  if (typeof value === "object") return "object";
-  return typeof value;
-}
-
-async function exploreCheongyak() {
-  if (!CHEONGYAK_KEY || !CHEONGYAK_BASE) {
-    console.log("[explore] 청약홈 환경변수 없음 - 건너뜀");
+async function main() {
+  if (!KEY || !BASE) {
+    console.log("[explore] 보조금24 환경변수 없음");
     return;
   }
-  const base = CHEONGYAK_BASE.trim().replace(/\/+$/, "");
-  console.log(`[explore] 청약홈 base=${base}`);
 
-  for (const { key, operation, label } of OPERATIONS) {
-    const url = `${base}/${CHEONGYAK_SERVICE}/${operation}?serviceKey=${CHEONGYAK_KEY}&page=1&perPage=3`;
-    console.log(`\n===== ${label} (${operation}) =====`);
-    try {
-      const { status, json, text } = await fetchJson(url);
-      if (!json) {
-        console.log(`  http ${status}, JSON 아님: ${text}`);
-        continue;
-      }
-      console.log(`  http ${status} / 최상위 키: ${Object.keys(json).join(", ")}`);
-      console.log(`  totalCount=${json.totalCount} matchCount=${json.matchCount} currentCount=${json.currentCount}`);
-      const first = json.data?.[0];
-      if (!first) {
-        console.log("  data 비어 있음:", JSON.stringify(json).slice(0, 400));
-        continue;
-      }
-      console.log(`  필드 ${Object.keys(first).length}개:`);
-      for (const [k, v] of Object.entries(first)) {
-        const preview = typeof v === "string" ? v.slice(0, 60) : JSON.stringify(v);
-        console.log(`    ${k} (${describe(v)}) = ${preview}`);
-      }
-    } catch (err) {
-      console.error(`  실패: ${err.message} (${err.cause?.message ?? err.cause?.code ?? "원인 불명"})`);
-    }
-  }
-}
-
-async function exploreSubsidy() {
-  if (!SUBSIDY_KEY || !SUBSIDY_BASE) {
-    console.log("\n[explore] 보조금24 환경변수 없음 - 건너뜀");
+  const list = await get("serviceList", { perPage: "100" });
+  if (!list.json?.data) {
+    console.log("serviceList 실패:", list.status, JSON.stringify(list.json ?? list.text).slice(0, 300));
     return;
   }
-  const base = SUBSIDY_BASE.trim().replace(/\/+$/, "");
-  console.log(`\n[explore] 보조금24 base=${base}`);
+  console.log(`serviceList http ${list.status} / totalCount=${list.json.totalCount}`);
 
-  // 오퍼레이션 이름을 모르니 후보를 순서대로 두드려 본다. odcloud는 경로가
-  // 없으면 code -3, 키가 문제면 -4로 구분해서 답해준다.
-  const candidates = [
-    "",
-    "/serviceList",
-    "/getServiceList",
-    "/publicServiceList",
-    "/serviceDetail",
-  ];
-  for (const path of candidates) {
-    const url = `${base}${path}?serviceKey=${SUBSIDY_KEY}&page=1&perPage=3`;
-    try {
-      const { status, json, text } = await fetchJson(url);
-      const summary = json ? JSON.stringify(json).slice(0, 300) : text;
-      console.log(`  "${path || "(없음)"}" → http ${status} ${summary}`);
-      if (json?.data?.[0]) {
-        console.log("  필드 목록:");
-        for (const [k, v] of Object.entries(json.data[0])) {
-          const preview = typeof v === "string" ? v.slice(0, 60) : JSON.stringify(v);
-          console.log(`    ${k} = ${preview}`);
-        }
-        break;
-      }
-    } catch (err) {
-      console.error(`  "${path}" 실패: ${err.message}`);
-    }
+  const first = list.json.data[0];
+  console.log("\n=== 첫 건의 필드 ===");
+  for (const [k, v] of Object.entries(first)) {
+    console.log(`  ${k} = ${String(v).slice(0, 80)}`);
+  }
+
+  // 신청기한 값이 어떤 꼴인지가 기획을 가른다. 100건을 훑어서 분류해 본다.
+  console.log("\n=== 신청기한 값 분포 (100건) ===");
+  const buckets = { 날짜형: [], 상시형: [], 기타: [] };
+  for (const row of list.json.data) {
+    const raw = String(row["신청기한"] ?? "").trim();
+    if (/\d{4}[-.년]\s?\d{1,2}[-.월]\s?\d{1,2}/.test(raw)) buckets.날짜형.push(raw);
+    else if (/상시|연중|수시|예산|소진|기간\s?내|접수시|별도/.test(raw)) buckets.상시형.push(raw);
+    else buckets.기타.push(raw);
+  }
+  for (const [name, values] of Object.entries(buckets)) {
+    console.log(`  ${name}: ${values.length}건`);
+    for (const v of [...new Set(values)].slice(0, 6)) console.log(`     "${v.slice(0, 90)}"`);
+  }
+
+  // 자격 조건 코드도 한 건 확인한다(무주택·다자녀·소득 구간 등).
+  const serviceId = first["서비스ID"];
+  const cond = await get("supportConditions", { "cond[서비스ID::EQ]": serviceId });
+  console.log(`\n=== supportConditions (서비스ID=${serviceId}) ===`);
+  const row = cond.json?.data?.[0];
+  if (!row) {
+    console.log("  없음:", JSON.stringify(cond.json ?? cond.text).slice(0, 200));
+  } else {
+    const set = Object.entries(row).filter(([k, v]) => k.startsWith("JA") && v && v !== "N");
+    console.log(`  전체 ${Object.keys(row).length}필드 중 값이 있는 조건 ${set.length}개`);
+    for (const [k, v] of set.slice(0, 20)) console.log(`    ${k} = ${v}`);
   }
 }
 
-await exploreCheongyak();
-await exploreSubsidy();
+await main();
