@@ -100,6 +100,23 @@
   .notice-actions { margin-top: 10px; display: flex; gap: 12px; flex-wrap: wrap; }
   .notice-actions a { font-size: 0.83rem; color: var(--calm); }
   .empty { color: var(--muted); font-size: 0.9rem; padding: 28px 0; text-align: center; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tab {
+    background: var(--card); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; font-size: 0.85rem; cursor: pointer; color: var(--fg); font-family: inherit;
+  }
+  .tab.active { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 600; }
+  .panel-note { font-size: 0.82rem; color: var(--muted); margin: 0 0 14px; word-break: keep-all; }
+  .subsidy { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+  .subsidy-name { font-weight: 600; font-size: 0.98rem; word-break: keep-all; }
+  .subsidy-summary { font-size: 0.85rem; margin-top: 6px; word-break: keep-all; }
+  .subsidy-meta { font-size: 0.8rem; color: var(--muted); margin-top: 6px; word-break: keep-all; }
+  .subsidy-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .more-btn {
+    width: 100%; padding: 12px; margin-top: 4px; font-family: inherit; font-size: 0.9rem;
+    color: var(--calm); background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; cursor: pointer;
+  }
   footer {
     border-top: 1px solid var(--border); margin-top: 32px; padding-top: 16px;
     color: var(--muted); font-size: 0.78rem;
@@ -117,16 +134,51 @@
     <button class="theme-toggle" type="button" id="theme-toggle" aria-label="테마 전환"><span aria-hidden="true">🌓</span></button>
   </header>
 
-  <div class="controls">
-    <label for="area-select">지역</label>
-    <select id="area-select"><option value="">전체</option></select>
-    <label for="kind-select">종류</label>
-    <select id="kind-select"><option value="">전체</option></select>
-    <input type="search" id="search-input" placeholder="단지·주소 검색">
+  <div class="tabs" role="tablist">
+    <button class="tab active" type="button" role="tab" aria-selected="true" data-tab="cheongyak">청약 마감</button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-tab="subsidy">주거 지원금</button>
   </div>
 
-  <p class="status" id="status"></p>
-  <div id="list"></div>
+  <section id="panel-cheongyak">
+    <div class="controls">
+      <label for="area-select">지역</label>
+      <select id="area-select"><option value="">전체</option></select>
+      <label for="kind-select">종류</label>
+      <select id="kind-select"><option value="">전체</option></select>
+      <input type="search" id="search-input" placeholder="단지·주소 검색">
+    </div>
+
+    <p class="status" id="status"></p>
+    <div id="list"></div>
+  </section>
+
+  <section id="panel-subsidy" hidden>
+    <p class="panel-note">
+      정부24에 등록된 주거 관련 지원금입니다. 대부분 상시 신청이라 마감일 카운트다운이 없고,
+      신청기한은 공고에 적힌 문구를 그대로 보여줍니다.
+    </p>
+    <div class="controls">
+      <label for="field-select">분야</label>
+      <select id="field-select"><option value="">전체</option></select>
+      <label for="income-select">소득</label>
+      <select id="income-select">
+        <option value="">전체</option>
+        <option value="0~50%">중위 50% 이하</option>
+        <option value="51~75%">중위 51~75%</option>
+        <option value="76~100%">중위 76~100%</option>
+        <option value="101~200%">중위 101~200%</option>
+      </select>
+      <label for="age-input">나이</label>
+      <input type="number" id="age-input" min="0" max="120" placeholder="예: 34" style="width:5.5em">
+    </div>
+    <div class="controls">
+      <input type="search" id="subsidy-search" placeholder="사업명·기관·내용 검색">
+    </div>
+
+    <p class="status" id="subsidy-status"></p>
+    <div id="subsidy-list"></div>
+    <button class="more-btn" type="button" id="subsidy-more" hidden></button>
+  </section>
 
   <footer>
     <div>자료: 한국부동산원 청약홈 분양정보 (공공데이터포털). 매일 아침 갱신하며, 접수가 끝난 공고는 목록에서 빠집니다.</div>
@@ -286,6 +338,121 @@
     fillSelect("kind-select", [...new Set((payload.notices ?? []).map((n) => n.kind).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko")), state.kind);
     render();
   }
+
+  // ---- 주거 지원금 ----
+  // 청약과 달리 마감이 없어서 D-day를 못 붙인다(신청기한이 날짜인 경우가 5%뿐).
+  // 대신 분야·소득·나이로 좁혀서 본다. 775건이라 한 번에 다 그리면 못 읽는다.
+  const SUBSIDY_PAGE = 20;
+  const subsidyState = { field: "", income: "", age: "", query: "", visible: SUBSIDY_PAGE };
+  let subsidyPayload = null;
+  let subsidyLoaded = false;
+
+  function matchesAge(item, age) {
+    const c = item.conditions;
+    // 연령 제한이 없는 사업은 나이를 입력해도 계속 보여준다.
+    if (!c || c.ageFrom === null || c.ageTo === null) return true;
+    return age >= c.ageFrom && age <= c.ageTo;
+  }
+
+  function matchesIncome(item, bracket) {
+    const income = item.conditions?.income ?? [];
+    // 소득 구간이 비어 있으면 제한이 없다는 뜻이다.
+    return income.length === 0 || income.includes(bracket);
+  }
+
+  function subsidyHtml(item) {
+    const tags = [];
+    if (item.supportType) tags.push(item.supportType);
+    if (item.conditions?.ageFrom !== null && item.conditions?.ageTo !== null) {
+      tags.push(`${item.conditions.ageFrom}~${item.conditions.ageTo}세`);
+    }
+    if (item.conditions?.income?.length) tags.push(`중위소득 ${item.conditions.income.join(", ")}`);
+
+    const meta = [item.agency, item.receiver].filter(Boolean).join(" · ");
+    return `<article class="subsidy">
+      <div class="subsidy-name">${escapeHtml(item.name)}</div>
+      ${item.summary ? `<div class="subsidy-summary">${escapeHtml(item.summary)}</div>` : ""}
+      ${item.content ? `<div class="subsidy-meta">${escapeHtml(item.content)}</div>` : ""}
+      <div class="subsidy-meta">${escapeHtml(meta)}${item.deadline ? ` · 신청기한: ${escapeHtml(item.deadline)}` : ""}</div>
+      <div class="subsidy-tags">${tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div>
+      ${item.url ? `<div class="notice-actions"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">자세히 보기</a></div>` : ""}
+    </article>`;
+  }
+
+  function renderSubsidy() {
+    const query = subsidyState.query.trim().toLowerCase();
+    const age = subsidyState.age === "" ? null : Number(subsidyState.age);
+    const items = (subsidyPayload?.items ?? []).filter((item) => {
+      if (subsidyState.field && item.field !== subsidyState.field) return false;
+      if (subsidyState.income && !matchesIncome(item, subsidyState.income)) return false;
+      if (age !== null && Number.isFinite(age) && !matchesAge(item, age)) return false;
+      if (!query) return true;
+      return `${item.name ?? ""} ${item.agency ?? ""} ${item.summary ?? ""} ${item.content ?? ""}`
+        .toLowerCase().includes(query);
+    });
+
+    const shown = items.slice(0, subsidyState.visible);
+    document.getElementById("subsidy-status").textContent = items.length
+      ? (items.length > shown.length ? `${items.length}건 중 ${shown.length}건` : `${items.length}건`)
+      : "";
+    document.getElementById("subsidy-list").innerHTML = shown.length
+      ? shown.map(subsidyHtml).join("")
+      : '<p class="empty">조건에 맞는 지원금이 없습니다.</p>';
+
+    const more = document.getElementById("subsidy-more");
+    const remaining = items.length - shown.length;
+    more.hidden = remaining <= 0;
+    if (remaining > 0) more.textContent = `${Math.min(remaining, SUBSIDY_PAGE)}건 더 보기`;
+  }
+
+  function renderSubsidyFromTop() {
+    subsidyState.visible = SUBSIDY_PAGE;
+    renderSubsidy();
+  }
+
+  async function loadSubsidy() {
+    if (subsidyLoaded) return;
+    subsidyLoaded = true;
+    const status = document.getElementById("subsidy-status");
+    status.textContent = "불러오는 중...";
+    try {
+      const res = await fetch(`./data/subsidy.json?_=${Date.now()}`);
+      if (!res.ok) throw new Error(`http ${res.status}`);
+      subsidyPayload = await res.json();
+    } catch (err) {
+      console.error("[subsidy]", err.message);
+      status.textContent = "지원금 목록을 불러오지 못했습니다.";
+      subsidyLoaded = false; // 탭을 다시 열면 재시도
+      return;
+    }
+    fillSelect("field-select", subsidyPayload.fields ?? [], subsidyState.field);
+    renderSubsidyFromTop();
+  }
+
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((t) => {
+        t.classList.remove("active");
+        t.setAttribute("aria-selected", "false");
+      });
+      tab.classList.add("active");
+      tab.setAttribute("aria-selected", "true");
+      const isSubsidy = tab.dataset.tab === "subsidy";
+      document.getElementById("panel-cheongyak").hidden = isSubsidy;
+      document.getElementById("panel-subsidy").hidden = !isSubsidy;
+      // 지원금 데이터는 청약보다 훨씬 커서(수백 KB) 탭을 열 때만 받는다.
+      if (isSubsidy) loadSubsidy();
+    });
+  });
+
+  document.getElementById("field-select").addEventListener("change", (e) => { subsidyState.field = e.target.value; renderSubsidyFromTop(); });
+  document.getElementById("income-select").addEventListener("change", (e) => { subsidyState.income = e.target.value; renderSubsidyFromTop(); });
+  document.getElementById("age-input").addEventListener("input", (e) => { subsidyState.age = e.target.value; renderSubsidyFromTop(); });
+  document.getElementById("subsidy-search").addEventListener("input", (e) => { subsidyState.query = e.target.value; renderSubsidyFromTop(); });
+  document.getElementById("subsidy-more").addEventListener("click", () => {
+    subsidyState.visible += SUBSIDY_PAGE;
+    renderSubsidy();
+  });
 
   document.getElementById("area-select").addEventListener("change", (e) => { state.area = e.target.value; render(); });
   document.getElementById("kind-select").addEventListener("change", (e) => { state.kind = e.target.value; render(); });
