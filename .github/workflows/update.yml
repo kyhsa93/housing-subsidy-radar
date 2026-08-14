@@ -35,6 +35,14 @@ jobs:
           CHEONGYAK_API_KEY: ${{ secrets.CHEONGYAK_API_KEY }}
           CHEONGYAK_API_ENDPOINT: ${{ secrets.CHEONGYAK_API_ENDPOINT }}
 
+      # 지원금은 청약과 달리 마감이 없어 매일 바뀌지 않지만, 두 데이터를 따로
+      # 돌릴 만큼 호출량이 크지 않아(하루 22회) 같이 갱신한다.
+      - name: 주거 지원금 수집
+        run: node scripts/fetch-subsidy.mjs
+        env:
+          SUBSIDY_API_KEY: ${{ secrets.SUBSIDY_API_KEY }}
+          SUBSIDY_API_ENDPOINT: ${{ secrets.SUBSIDY_API_ENDPOINT }}
+
       - name: 변경사항 커밋 및 푸시
         run: |
           git config user.name "github-actions[bot]"
