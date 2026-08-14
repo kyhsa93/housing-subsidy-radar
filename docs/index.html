@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f4e46">
+<title>청약 마감 레이더</title>
+<meta name="description" content="전국 APT 분양과 임의공급 청약 공고를 매일 모아 접수 마감이 임박한 순서로 보여줍니다. 지역·종류로 걸러 볼 수 있습니다.">
+<link rel="canonical" href="https://kyhsa93.github.io/housing-subsidy-radar/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="청약 마감 레이더">
+<meta property="og:description" content="전국 APT 분양과 임의공급 청약 공고를 매일 모아 접수 마감이 임박한 순서로 보여줍니다.">
+<meta property="og:url" content="https://kyhsa93.github.io/housing-subsidy-radar/">
+<meta property="og:locale" content="ko_KR">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #666;
+    --card: #f5f5f7;
+    --border: #e2e2e5;
+    --urgent: #c0392b;
+    --soon: #b9770e;
+    --calm: #1f4e46;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --fg: #eaeaea;
+      --muted: #9a9a9a;
+      --card: #1a1d24;
+      --border: #2a2d35;
+      --urgent: #e57373;
+      --soon: #e0b060;
+      --calm: #7fbfae;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1115; --fg: #eaeaea; --muted: #9a9a9a;
+    --card: #1a1d24; --border: #2a2d35;
+    --urgent: #e57373; --soon: #e0b060; --calm: #7fbfae;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666;
+    --card: #f5f5f7; --border: #e2e2e5;
+    --urgent: #c0392b; --soon: #b9770e; --calm: #1f4e46;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.5;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 12px; margin-bottom: 20px;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .updated { color: var(--muted); font-size: 0.85rem; }
+  .theme-toggle {
+    flex-shrink: 0; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; width: 36px; height: 36px; font-size: 1.1rem;
+    line-height: 1; cursor: pointer; color: var(--fg);
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+  .controls label { font-size: 0.82rem; color: var(--muted); }
+  .controls select, .controls input[type="search"] {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-size: 0.85rem; font-family: inherit;
+  }
+  .controls input[type="search"] { flex: 1; min-width: 140px; }
+  .status { font-size: 0.85rem; color: var(--muted); margin-bottom: 12px; }
+  .notice {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .notice-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .dday {
+    flex-shrink: 0; font-weight: 700; font-size: 0.95rem;
+    font-variant-numeric: tabular-nums; color: var(--calm);
+  }
+  .dday.urgent { color: var(--urgent); }
+  .dday.soon { color: var(--soon); }
+  .notice-name { font-weight: 600; font-size: 1rem; word-break: keep-all; }
+  .tag {
+    font-size: 0.68rem; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .tag.open { border-color: currentColor; color: var(--calm); }
+  .notice-meta { font-size: 0.82rem; color: var(--muted); margin-top: 6px; word-break: keep-all; }
+  .notice-dates { font-size: 0.82rem; margin-top: 8px; display: grid; gap: 2px; }
+  .notice-dates div { display: flex; gap: 8px; }
+  .notice-dates dt { color: var(--muted); min-width: 5.5em; }
+  .notice-actions { margin-top: 10px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .notice-actions a { font-size: 0.83rem; color: var(--calm); }
+  .empty { color: var(--muted); font-size: 0.9rem; padding: 28px 0; text-align: center; }
+  footer {
+    border-top: 1px solid var(--border); margin-top: 32px; padding-top: 16px;
+    color: var(--muted); font-size: 0.78rem;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>청약 마감 레이더</h1>
+      <div class="updated" id="updated">불러오는 중...</div>
+    </div>
+    <button class="theme-toggle" type="button" id="theme-toggle" aria-label="테마 전환"><span aria-hidden="true">🌓</span></button>
+  </header>
+
+  <div class="controls">
+    <label for="area-select">지역</label>
+    <select id="area-select"><option value="">전체</option></select>
+    <label for="kind-select">종류</label>
+    <select id="kind-select"><option value="">전체</option></select>
+    <input type="search" id="search-input" placeholder="단지·주소 검색">
+  </div>
+
+  <p class="status" id="status"></p>
+  <div id="list"></div>
+
+  <footer>
+    <div>자료: 한국부동산원 청약홈 분양정보 (공공데이터포털). 매일 아침 갱신하며, 접수가 끝난 공고는 목록에서 빠집니다.</div>
+    <div style="margin-top:6px;">실제 접수 자격과 일정은 반드시 <a href="https://www.applyhome.co.kr" target="_blank" rel="noopener">청약홈</a>의 모집공고문으로 확인하세요.</div>
+  </footer>
+</main>
+
+<script>
+  const THEME_ICONS = { auto: "🌓", light: "☀️", dark: "🌙" };
+  let theme = localStorage.getItem("theme") === "light" || localStorage.getItem("theme") === "dark"
+    ? localStorage.getItem("theme") : "auto";
+
+  function applyTheme(next) {
+    theme = next;
+    localStorage.setItem("theme", theme);
+    if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", theme);
+    document.querySelector("#theme-toggle span").textContent = THEME_ICONS[theme];
+  }
+  applyTheme(theme);
+
+  const state = { area: "", kind: "", query: "" };
+  let payload = null;
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  /**
+   * D-day는 브라우저 로컬 시각이 아니라 한국 날짜로 센다. 해외에서 접속해도
+   * 청약 일정은 한국 기준이라 하루가 어긋나면 안 된다.
+   */
+  function kstToday() {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+  }
+
+  function daysBetween(fromIso, toIso) {
+    const from = Date.parse(fromIso + "T00:00:00Z");
+    const to = Date.parse(toIso + "T00:00:00Z");
+    if (Number.isNaN(from) || Number.isNaN(to)) return null;
+    return Math.round((to - from) / 86400000);
+  }
+
+  function ddayLabel(days) {
+    if (days === null) return "-";
+    if (days === 0) return "오늘 마감";
+    if (days < 0) return "마감";
+    return `D-${days}`;
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return null;
+    const [, m, d] = iso.split("-");
+    return `${Number(m)}월 ${Number(d)}일`;
+  }
+
+  function fmtRange(start, end) {
+    if (!start && !end) return null;
+    if (start && end && start !== end) return `${fmtDate(start)} ~ ${fmtDate(end)}`;
+    return fmtDate(end ?? start);
+  }
+
+  function fmtMoveIn(ym) {
+    if (!ym || ym.length !== 6) return null;
+    return `${ym.slice(0, 4)}년 ${Number(ym.slice(4))}월`;
+  }
+
+  function noticeHtml(notice, today) {
+    const days = daysBetween(today, notice.receiptEnd);
+    const ddayClass = days !== null && days <= 3 ? "urgent" : days !== null && days <= 7 ? "soon" : "";
+    // 접수 시작 전인지 진행 중인지 구분해준다 - D-day만으로는 지금 신청할 수
+    // 있는 건지 알 수 없다.
+    const started = notice.receiptStart ? notice.receiptStart <= today : true;
+    const statusTag = started
+      ? '<span class="tag open">접수 중</span>'
+      : `<span class="tag">${escapeHtml(fmtDate(notice.receiptStart))} 접수 시작</span>`;
+
+    const rows = [
+      ["접수", fmtRange(notice.receiptStart, notice.receiptEnd)],
+      ["특별공급", fmtRange(notice.specialStart, notice.specialEnd)],
+      ["당첨자 발표", fmtDate(notice.winnerDate)],
+      ["입주 예정", fmtMoveIn(notice.moveInMonth)],
+    ].filter(([, value]) => value);
+
+    const meta = [
+      notice.area,
+      notice.units ? `${notice.units.toLocaleString("ko-KR")}세대` : null,
+      notice.builder,
+    ].filter(Boolean).join(" · ");
+
+    const actions = [];
+    if (notice.url) actions.push(`<a href="${escapeHtml(notice.url)}" target="_blank" rel="noopener">공고 보기</a>`);
+    if (notice.homepage) actions.push(`<a href="${escapeHtml(notice.homepage)}" target="_blank" rel="noopener">분양 홈페이지</a>`);
+    if (notice.tel) actions.push(`<a href="tel:${escapeHtml(notice.tel)}">문의 ${escapeHtml(notice.tel)}</a>`);
+
+    return `<article class="notice">
+      <div class="notice-head">
+        <span class="dday ${ddayClass}">${escapeHtml(ddayLabel(days))}</span>
+        <span class="notice-name">${escapeHtml(notice.name)}</span>
+        <span class="tag">${escapeHtml(notice.kind ?? "")}</span>
+        ${statusTag}
+      </div>
+      <div class="notice-meta">${escapeHtml(meta)}</div>
+      <div class="notice-meta">${escapeHtml(notice.address ?? "")}</div>
+      <dl class="notice-dates">
+        ${rows.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`).join("")}
+      </dl>
+      <div class="notice-actions">${actions.join("")}</div>
+    </article>`;
+  }
+
+  function render() {
+    const today = kstToday();
+    const query = state.query.trim().toLowerCase();
+    const notices = (payload?.notices ?? []).filter((notice) => {
+      if (state.area && notice.area !== state.area) return false;
+      if (state.kind && notice.kind !== state.kind) return false;
+      if (!query) return true;
+      return `${notice.name ?? ""} ${notice.address ?? ""}`.toLowerCase().includes(query);
+    });
+
+    document.getElementById("status").textContent = notices.length
+      ? `${notices.length}건 · 마감 임박순`
+      : "";
+    document.getElementById("list").innerHTML = notices.length
+      ? notices.map((notice) => noticeHtml(notice, today)).join("")
+      : '<p class="empty">조건에 맞는 공고가 없습니다.</p>';
+  }
+
+  function fillSelect(id, values, current) {
+    const select = document.getElementById(id);
+    select.innerHTML = ['<option value="">전체</option>']
+      .concat(values.map((v) => `<option value="${escapeHtml(v)}" ${v === current ? "selected" : ""}>${escapeHtml(v)}</option>`))
+      .join("");
+  }
+
+  async function main() {
+    try {
+      const res = await fetch(`./data/cheongyak.json?_=${Date.now()}`);
+      if (!res.ok) throw new Error(`http ${res.status}`);
+      payload = await res.json();
+    } catch (err) {
+      console.error("[cheongyak]", err.message);
+      document.getElementById("updated").textContent = "-";
+      document.getElementById("list").innerHTML = '<p class="empty">공고를 불러오지 못했습니다.</p>';
+      return;
+    }
+
+    const updated = payload.updatedAt
+      ? new Date(payload.updatedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" }) + " KST"
+      : "-";
+    document.getElementById("updated").textContent = `갱신: ${updated}`;
+
+    fillSelect("area-select", payload.areas ?? [], state.area);
+    fillSelect("kind-select", [...new Set((payload.notices ?? []).map((n) => n.kind).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko")), state.kind);
+    render();
+  }
+
+  document.getElementById("area-select").addEventListener("change", (e) => { state.area = e.target.value; render(); });
+  document.getElementById("kind-select").addEventListener("change", (e) => { state.kind = e.target.value; render(); });
+  document.getElementById("search-input").addEventListener("input", (e) => { state.query = e.target.value; render(); });
+  document.getElementById("theme-toggle").addEventListener("click", () => {
+    const order = ["auto", "light", "dark"];
+    applyTheme(order[(order.indexOf(theme) + 1) % order.length]);
+  });
+
+  main();
+</script>
+</body>
+</html>
