@@ -1,0 +1,73 @@
+name: Update notices
+
+# 청약 공고는 마감일 카운트다운이 핵심이라 날짜가 바뀌면 D-day도 바뀐다.
+# 하루 한 번, 아침에 갱신한다.
+on:
+  schedule:
+    - cron: "20 21 * * *" # 06:20 KST (정각은 스케줄 트리거가 몰려 지연이 크다)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 청약 공고 수집
+        run: node scripts/fetch-cheongyak.mjs
+        env:
+          CHEONGYAK_API_KEY: ${{ secrets.CHEONGYAK_API_KEY }}
+          CHEONGYAK_API_ENDPOINT: ${{ secrets.CHEONGYAK_API_ENDPOINT }}
+
+      - name: 변경사항 커밋 및 푸시
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # git diff는 아직 추적되지 않는 파일을 보지 못한다. docs/data가 처음
+          # 생기는 실행에서는 "변경사항 없음"으로 잘못 판단하므로 먼저 add한다.
+          git add docs/data
+          if git diff --cached --quiet; then
+            echo "변경사항 없음, 커밋 생략"
+            exit 0
+          fi
+          git commit -m "chore: 청약 공고 갱신 $(TZ=Asia/Seoul date +%Y-%m-%d)"
+          for i in 1 2 3 4 5; do
+            if git push; then
+              exit 0
+            fi
+            echo "push 실패($i), rebase 후 재시도"
+            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)"
+            sleep $((i * 3))
+          done
+          echo "push 재시도 모두 실패"
+          exit 1
+
+      # GITHUB_TOKEN으로 푸시한 커밋은 다른 워크플로를 트리거하지 않는다.
+      # 그래서 배포를 여기서 직접 한다.
+      - name: Pages 설정
+        uses: actions/configure-pages@v5
+
+      - name: Pages 아티팩트 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "./docs"
+
+      - name: Pages에 배포
+        id: deployment
+        uses: actions/deploy-pages@v4
