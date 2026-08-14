@@ -144,6 +144,31 @@ const INCOME_BRACKETS = [
   ["JA0205", "200% 초과"],
 ];
 
+// 주거 지원금은 775건 중 636건이 지자체 사업이라(시군구 496, 광역시도 140)
+// 사는 지역으로 거르지 못하면 목록이 사실상 안 좁혀진다. 소관기관명이
+// "경상남도 사천시", "서울특별시 송파구"처럼 시도로 시작해서 그걸 쓴다.
+const REGIONS = [
+  "서울특별시", "부산광역시", "대구광역시", "인천광역시", "대전광역시", "울산광역시",
+  "세종특별자치시", "경기도", "강원특별자치도", "충청북도", "충청남도",
+  "전북특별자치도", "전라남도", "광주광역시", "전남광주통합특별시",
+  "경상북도", "경상남도", "제주특별자치도",
+];
+// "대구도시개발공사"처럼 시도명이 앞에 붙기만 한 기관도 있어서 접두어로도 본다.
+const REGION_PREFIXES = REGIONS.map((name) => ({ name, prefix: name.replace(/(특별자치도|특별자치시|특별시|광역시|도)$/, "") }))
+  .sort((a, b) => b.prefix.length - a.prefix.length);
+
+function regionOf(row) {
+  const type = clean(row["소관기관유형"]);
+  // 중앙부처·공공기관 사업은 어디 살든 신청할 수 있다.
+  if (type === "중앙행정기관" || type === "공공기관") return "전국";
+
+  const agency = clean(row["소관기관명"]) ?? "";
+  for (const { name, prefix } of REGION_PREFIXES) {
+    if (agency.startsWith(name) || agency.startsWith(prefix)) return name;
+  }
+  return null;
+}
+
 function toNumberOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -201,6 +226,7 @@ async function main() {
       deadline: clean(row["신청기한"]),
       agency: clean(row["소관기관명"]),
       agencyType: clean(row["소관기관유형"]),
+      region: regionOf(row),
       receiver: clean(row["접수기관"]),
       tel: clean(row["전화문의"]),
       url: clean(row["상세조회URL"]),
@@ -223,6 +249,11 @@ async function main() {
   }
   const withConditions = items.filter((i) => i.conditions).length;
   console.log(`[fetch-subsidy] 자격 조건이 붙은 건: ${withConditions}/${items.length}`);
+  const unknownRegion = items.filter((i) => !i.region);
+  console.log(`[fetch-subsidy] 지역 미상: ${unknownRegion.length}건`);
+  for (const item of unknownRegion.slice(0, 5)) {
+    console.warn(`[fetch-subsidy]   지역 못 찾음: ${item.agency} (${item.agencyType})`);
+  }
 
   if (items.length === 0) {
     throw new Error("주거 관련 지원금이 0건 - 기존 데이터를 덮어쓰지 않고 중단합니다");
@@ -235,6 +266,11 @@ async function main() {
       updatedAt: new Date().toISOString(),
       total: services.length,
       fields: [...new Set(items.map((i) => i.field).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko")),
+      // "전국"을 맨 앞에 두고 나머지는 가나다순. 지역 선택의 기본값 역할을 한다.
+      regions: [
+        ...(items.some((i) => i.region === "전국") ? ["전국"] : []),
+        ...[...new Set(items.map((i) => i.region).filter((r) => r && r !== "전국"))].sort((a, b) => a.localeCompare(b, "ko")),
+      ],
       items,
     })
   );

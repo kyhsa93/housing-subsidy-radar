@@ -158,6 +158,8 @@
       신청기한은 공고에 적힌 문구를 그대로 보여줍니다.
     </p>
     <div class="controls">
+      <label for="region-select">지역</label>
+      <select id="region-select"><option value="">전체</option></select>
       <label for="field-select">분야</label>
       <select id="field-select"><option value="">전체</option></select>
       <label for="income-select">소득</label>
@@ -343,7 +345,12 @@
   // 청약과 달리 마감이 없어서 D-day를 못 붙인다(신청기한이 날짜인 경우가 5%뿐).
   // 대신 분야·소득·나이로 좁혀서 본다. 775건이라 한 번에 다 그리면 못 읽는다.
   const SUBSIDY_PAGE = 20;
-  const subsidyState = { field: "", income: "", age: "", query: "", visible: SUBSIDY_PAGE };
+  const SUBSIDY_REGION_KEY = "subsidyRegion";
+  const subsidyState = {
+    // 사는 지역은 잘 안 바뀌니 골라둔 값을 기억한다.
+    region: localStorage.getItem(SUBSIDY_REGION_KEY) ?? "",
+    field: "", income: "", age: "", query: "", visible: SUBSIDY_PAGE,
+  };
   let subsidyPayload = null;
   let subsidyLoaded = false;
 
@@ -368,6 +375,7 @@
     }
     if (item.conditions?.income?.length) tags.push(`중위소득 ${item.conditions.income.join(", ")}`);
 
+    // 기관명이 곧 지역이라(“서울특별시 송파구”) region을 따로 적으면 겹친다.
     const meta = [item.agency, item.receiver].filter(Boolean).join(" · ");
     return `<article class="subsidy">
       <div class="subsidy-name">${escapeHtml(item.name)}</div>
@@ -383,6 +391,9 @@
     const query = subsidyState.query.trim().toLowerCase();
     const age = subsidyState.age === "" ? null : Number(subsidyState.age);
     const items = (subsidyPayload?.items ?? []).filter((item) => {
+      // 지역을 고르면 그 지역 사업과 전국 사업을 함께 보여준다. 중앙부처 사업은
+      // 어디 살든 신청할 수 있어서 빼면 오히려 목록이 틀려진다.
+      if (subsidyState.region && item.region !== subsidyState.region && item.region !== "전국") return false;
       if (subsidyState.field && item.field !== subsidyState.field) return false;
       if (subsidyState.income && !matchesIncome(item, subsidyState.income)) return false;
       if (age !== null && Number.isFinite(age) && !matchesAge(item, age)) return false;
@@ -425,6 +436,7 @@
       subsidyLoaded = false; // 탭을 다시 열면 재시도
       return;
     }
+    fillSelect("region-select", subsidyPayload.regions ?? [], subsidyState.region);
     fillSelect("field-select", subsidyPayload.fields ?? [], subsidyState.field);
     renderSubsidyFromTop();
   }
@@ -445,6 +457,11 @@
     });
   });
 
+  document.getElementById("region-select").addEventListener("change", (e) => {
+    subsidyState.region = e.target.value;
+    localStorage.setItem(SUBSIDY_REGION_KEY, subsidyState.region);
+    renderSubsidyFromTop();
+  });
   document.getElementById("field-select").addEventListener("change", (e) => { subsidyState.field = e.target.value; renderSubsidyFromTop(); });
   document.getElementById("income-select").addEventListener("change", (e) => { subsidyState.income = e.target.value; renderSubsidyFromTop(); });
   document.getElementById("age-input").addEventListener("input", (e) => { subsidyState.age = e.target.value; renderSubsidyFromTop(); });
