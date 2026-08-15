@@ -42,11 +42,17 @@ jobs:
           SUBSIDY_API_KEY: ${{ secrets.SUBSIDY_API_KEY }}
           SUBSIDY_API_ENDPOINT: ${{ secrets.SUBSIDY_API_ENDPOINT }}
 
+      - name: 정적 HTML에 오늘 공고 심기
+        run: node scripts/prerender.mjs
+
+      - name: 테스트 (수집 후)
+        run: npm test
+
       - name: 변경사항 커밋 및 푸시
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/data
+          git add docs
           if git diff --cached --quiet; then
             echo "변경사항 없음, 커밋 생략"
             exit 0
