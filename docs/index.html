@@ -118,6 +118,16 @@
     color: var(--calm); background: var(--card); border: 1px solid var(--border);
     border-radius: 10px; cursor: pointer;
   }
+  .empty button, .status button {
+    font: inherit;
+    background: var(--fg);
+    color: var(--bg);
+    border: 0;
+    border-radius: 8px;
+    padding: 4px 12px;
+    margin-left: 8px;
+    cursor: pointer;
+  }
   footer {
     border-top: 1px solid var(--border); margin-top: 32px; padding-top: 16px;
     color: var(--muted); font-size: 0.78rem;
@@ -323,7 +333,13 @@
     } catch (err) {
       console.error("[cheongyak]", err.message);
       document.getElementById("updated").textContent = "-";
-      document.getElementById("list").innerHTML = '<p class="empty">공고를 불러오지 못했습니다.</p>';
+      document.getElementById("list").innerHTML =
+        '<p class="empty">공고를 불러오지 못했습니다. <button type="button" id="load-retry">다시 시도</button></p>';
+      document.getElementById("load-retry")?.addEventListener("click", (e) => {
+        e.currentTarget.disabled = true;
+        window.analytics?.event("load_retry", { panel: "cheongyak" });
+        main();
+      });
       window.analytics?.event("exception", { description: `load cheongyak: ${err.message}`.slice(0, 100), fatal: true });
       window.analytics?.pageView();
       return;
@@ -422,7 +438,13 @@
       subsidyPayload = await res.json();
     } catch (err) {
       console.error("[subsidy]", err.message);
-      status.textContent = "지원금 목록을 불러오지 못했습니다.";
+      status.innerHTML =
+        '지원금 목록을 불러오지 못했습니다. <button type="button" id="subsidy-retry">다시 시도</button>';
+      document.getElementById("subsidy-retry")?.addEventListener("click", (e) => {
+        e.currentTarget.disabled = true;
+        window.analytics?.event("load_retry", { panel: "subsidy" });
+        loadSubsidy();
+      });
       window.analytics?.event("exception", { description: `load subsidy: ${err.message}`.slice(0, 100), fatal: false });
       subsidyLoaded = false;
       return;

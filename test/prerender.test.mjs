@@ -71,3 +71,12 @@ test("GA 로더와 사이트 구분이 붙어 있다", async () => {
   // 콘텐츠가 얇은 상태라 광고는 붙이지 않는다(도메인 전체 심사에 영향을 준다).
   assert.ok(!html.includes("adsbygoogle"), "애드센스가 붙었다");
 });
+
+// 실패했을 때 사용자가 할 수 있는 게 새로고침뿐이면, 그 안내라도 화면에 있어야 한다.
+test("로드가 실패하면 다시 시도할 수단을 준다", async () => {
+  const html = await readIndex();
+  for (const id of ["load-retry", "subsidy-retry"]) {
+    assert.ok(html.includes(`id="${id}"`), `${id} 버튼이 없다`);
+  }
+  assert.ok(html.includes('event("load_retry"'), "재시도를 계측하지 않는다");
+});
