@@ -403,13 +403,24 @@
     if (item.conditions?.income?.length) tags.push(`중위소득 ${item.conditions.income.join(", ")}`);
 
     const meta = [item.agency, item.receiver].filter(Boolean).join(" · ");
+
+    // 실제로 신청하려는 사람에게 필요한 건 신청 방법과 문의처인데, 데이터에 있으면서도
+    // 화면에 안 나와서 결국 정부24를 다시 찾아야 했다.
+    const howTo = [
+      item.applyMethod ? `신청 방법: ${item.applyMethod}` : null,
+      item.tel ? `문의: ${item.tel}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
     return `<article class="subsidy">
       <div class="subsidy-name">${escapeHtml(item.name)}</div>
       ${item.summary ? `<div class="subsidy-summary">${escapeHtml(item.summary)}</div>` : ""}
       ${item.content ? `<div class="subsidy-meta">${escapeHtml(item.content)}</div>` : ""}
       <div class="subsidy-meta">${escapeHtml(meta)}${item.deadline ? ` · 신청기한: ${escapeHtml(item.deadline)}` : ""}</div>
+      ${howTo ? `<div class="subsidy-meta">${escapeHtml(howTo)}</div>` : ""}
       <div class="subsidy-tags">${tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div>
-      ${item.url ? `<div class="notice-actions"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">자세히 보기</a></div>` : ""}
+      ${item.url ? `<div class="notice-actions"><a href="${escapeHtml(item.url)}" data-subsidy-link target="_blank" rel="noopener">정부24에서 신청하기</a></div>` : ""}
     </article>`;
   }
 
@@ -523,6 +534,11 @@
     showTab(current.get("tab") === "subsidy" ? "subsidy" : "cheongyak");
     render();
     if (subsidyPayload) renderSubsidyFromTop();
+  });
+
+  document.getElementById("subsidy-list").addEventListener("click", (e) => {
+    if (!e.target.closest("[data-subsidy-link]")) return;
+    window.analytics?.event("subsidy_click", { field: subsidyState.field || "all" });
   });
 
   document.querySelectorAll(".tab").forEach((tab) => {

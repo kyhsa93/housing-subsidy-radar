@@ -93,3 +93,11 @@ test("탭·필터·검색이 주소에 남는다", async () => {
   // 글자마다 pushState하면 뒤로가기가 못 쓰게 된다.
   assert.ok(/history\[push \? "pushState" : "replaceState"\]/.test(html), "기록 방식 구분이 없다");
 });
+
+// 데이터에 있으면서 화면에 안 나오면, 신청하려는 사람은 결국 정부24를 다시 찾아야 한다.
+test("지원금 카드가 신청 방법과 문의처를 보여준다", async () => {
+  const html = await readIndex();
+  assert.ok(html.includes("item.applyMethod"), "신청 방법을 안 쓴다");
+  assert.ok(html.includes("item.tel"), "문의처를 안 쓴다");
+  assert.ok(html.includes("data-subsidy-link"), "바깥 링크 클릭을 계측하지 않는다");
+});
