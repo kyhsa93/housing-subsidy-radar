@@ -214,7 +214,15 @@
   }
   applyTheme(theme);
 
-  const state = { area: "", kind: "", query: "" };
+  // 탭·필터·검색을 주소에 남긴다. 안 그러면 걸러놓은 화면을 공유할 수 없고,
+  // 지원금 탭을 보다 뒤로가기를 누르면 사이트를 빠져나가 버린다.
+  const urlParams = new URLSearchParams(location.search);
+
+  const state = {
+    area: urlParams.get("area") ?? "",
+    kind: urlParams.get("kind") ?? "",
+    query: urlParams.get("q") ?? "",
+  };
   let payload = null;
 
   function escapeHtml(value) {
@@ -338,7 +346,13 @@
       document.getElementById("load-retry")?.addEventListener("click", (e) => {
         e.currentTarget.disabled = true;
         window.analytics?.event("load_retry", { panel: "cheongyak" });
-        main();
+        // 주소로 들어온 상태를 화면에 반영한다(입력값은 렌더가 아니라 여기서 채운다).
+  document.getElementById("search-input").value = state.query;
+  document.getElementById("subsidy-search").value = subsidyState.query;
+  document.getElementById("age-input").value = subsidyState.age;
+  if (urlParams.get("tab") === "subsidy") showTab("subsidy");
+
+  main();
       });
       window.analytics?.event("exception", { description: `load cheongyak: ${err.message}`.slice(0, 100), fatal: true });
       window.analytics?.pageView();
@@ -359,8 +373,12 @@
   const SUBSIDY_PAGE = 20;
   const SUBSIDY_REGION_KEY = "subsidyRegion";
   const subsidyState = {
-    region: localStorage.getItem(SUBSIDY_REGION_KEY) ?? "",
-    field: "", income: "", age: "", query: "", visible: SUBSIDY_PAGE,
+    region: urlParams.get("region") ?? localStorage.getItem(SUBSIDY_REGION_KEY) ?? "",
+    field: urlParams.get("field") ?? "",
+    income: urlParams.get("income") ?? "",
+    age: urlParams.get("age") ?? "",
+    query: urlParams.get("sq") ?? "",
+    visible: SUBSIDY_PAGE,
   };
   let subsidyPayload = null;
   let subsidyLoaded = false;
@@ -454,18 +472,64 @@
     renderSubsidyFromTop();
   }
 
+  function currentTab() {
+    return document.getElementById("panel-subsidy").hidden ? "cheongyak" : "subsidy";
+  }
+
+  function syncUrl({ push = false } = {}) {
+    const next = new URLSearchParams();
+    const pairs = [
+      ["tab", currentTab(), "cheongyak"],
+      ["area", state.area, ""],
+      ["kind", state.kind, ""],
+      ["q", state.query.trim(), ""],
+      ["region", subsidyState.region, ""],
+      ["field", subsidyState.field, ""],
+      ["income", subsidyState.income, ""],
+      ["age", subsidyState.age, ""],
+      ["sq", subsidyState.query.trim(), ""],
+    ];
+    for (const [key, value, empty] of pairs) if (value !== empty) next.set(key, value);
+    const query = next.toString();
+    const url = `${location.pathname}${query ? `?${query}` : ""}`;
+    if (url === `${location.pathname}${location.search}`) return;
+    // 검색은 글자마다 기록을 쌓으면 뒤로가기가 못 쓰게 되므로 교체만 한다.
+    history[push ? "pushState" : "replaceState"](null, "", url);
+  }
+
+  function showTab(name) {
+    const isSubsidy = name === "subsidy";
+    document.querySelectorAll(".tab").forEach((t) => {
+      const active = t.dataset.tab === name;
+      t.classList.toggle("active", active);
+      t.setAttribute("aria-selected", String(active));
+    });
+    document.getElementById("panel-cheongyak").hidden = isSubsidy;
+    document.getElementById("panel-subsidy").hidden = !isSubsidy;
+    if (isSubsidy) loadSubsidy();
+  }
+
+  window.addEventListener("popstate", () => {
+    const current = new URLSearchParams(location.search);
+    state.area = current.get("area") ?? "";
+    state.kind = current.get("kind") ?? "";
+    state.query = current.get("q") ?? "";
+    subsidyState.region = current.get("region") ?? "";
+    subsidyState.field = current.get("field") ?? "";
+    subsidyState.income = current.get("income") ?? "";
+    subsidyState.age = current.get("age") ?? "";
+    subsidyState.query = current.get("sq") ?? "";
+    subsidyState.visible = SUBSIDY_PAGE;
+    showTab(current.get("tab") === "subsidy" ? "subsidy" : "cheongyak");
+    render();
+    if (subsidyPayload) renderSubsidyFromTop();
+  });
+
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach((t) => {
-        t.classList.remove("active");
-        t.setAttribute("aria-selected", "false");
-      });
-      tab.classList.add("active");
-      tab.setAttribute("aria-selected", "true");
-      const isSubsidy = tab.dataset.tab === "subsidy";
-      document.getElementById("panel-cheongyak").hidden = isSubsidy;
-      document.getElementById("panel-subsidy").hidden = !isSubsidy;
-      if (isSubsidy) loadSubsidy();
+      showTab(tab.dataset.tab);
+      syncUrl({ push: true });
+      window.analytics?.event("tab_switch", { panel: tab.dataset.tab });
     });
   });
 
@@ -473,19 +537,20 @@
     subsidyState.region = e.target.value;
     localStorage.setItem(SUBSIDY_REGION_KEY, subsidyState.region);
     renderSubsidyFromTop();
+    syncUrl({ push: true });
   });
-  document.getElementById("field-select").addEventListener("change", (e) => { subsidyState.field = e.target.value; renderSubsidyFromTop(); });
-  document.getElementById("income-select").addEventListener("change", (e) => { subsidyState.income = e.target.value; renderSubsidyFromTop(); });
-  document.getElementById("age-input").addEventListener("input", (e) => { subsidyState.age = e.target.value; renderSubsidyFromTop(); });
-  document.getElementById("subsidy-search").addEventListener("input", (e) => { subsidyState.query = e.target.value; renderSubsidyFromTop(); });
+  document.getElementById("field-select").addEventListener("change", (e) => { subsidyState.field = e.target.value; renderSubsidyFromTop(); syncUrl({ push: true }); });
+  document.getElementById("income-select").addEventListener("change", (e) => { subsidyState.income = e.target.value; renderSubsidyFromTop(); syncUrl({ push: true }); });
+  document.getElementById("age-input").addEventListener("input", (e) => { subsidyState.age = e.target.value; renderSubsidyFromTop(); syncUrl(); });
+  document.getElementById("subsidy-search").addEventListener("input", (e) => { subsidyState.query = e.target.value; renderSubsidyFromTop(); syncUrl(); });
   document.getElementById("subsidy-more").addEventListener("click", () => {
     subsidyState.visible += SUBSIDY_PAGE;
     renderSubsidy();
   });
 
-  document.getElementById("area-select").addEventListener("change", (e) => { state.area = e.target.value; render(); });
-  document.getElementById("kind-select").addEventListener("change", (e) => { state.kind = e.target.value; render(); });
-  document.getElementById("search-input").addEventListener("input", (e) => { state.query = e.target.value; render(); });
+  document.getElementById("area-select").addEventListener("change", (e) => { state.area = e.target.value; render(); syncUrl({ push: true }); });
+  document.getElementById("kind-select").addEventListener("change", (e) => { state.kind = e.target.value; render(); syncUrl({ push: true }); });
+  document.getElementById("search-input").addEventListener("input", (e) => { state.query = e.target.value; render(); syncUrl(); });
   document.getElementById("theme-toggle").addEventListener("click", () => {
     const order = ["auto", "light", "dark"];
     applyTheme(order[(order.indexOf(theme) + 1) % order.length]);

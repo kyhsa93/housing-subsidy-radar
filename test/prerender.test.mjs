@@ -80,3 +80,16 @@ test("로드가 실패하면 다시 시도할 수단을 준다", async () => {
   }
   assert.ok(html.includes('event("load_retry"'), "재시도를 계측하지 않는다");
 });
+
+// 필터를 걸어둔 화면을 공유할 수 있어야 하고, 뒤로가기가 사이트를 빠져나가면 안 된다.
+test("탭·필터·검색이 주소에 남는다", async () => {
+  const html = await readIndex();
+
+  for (const key of ["tab", "area", "kind", "region", "field", "income", "age"]) {
+    assert.ok(html.includes(`"${key}",`), `${key}가 주소에 안 실린다`);
+  }
+  assert.ok(html.includes('urlParams.get("tab")'), "주소의 탭을 읽지 않는다");
+  assert.ok(html.includes('addEventListener("popstate"'), "뒤로가기 처리가 없다");
+  // 글자마다 pushState하면 뒤로가기가 못 쓰게 된다.
+  assert.ok(/history\[push \? "pushState" : "replaceState"\]/.test(html), "기록 방식 구분이 없다");
+});
