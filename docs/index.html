@@ -49,6 +49,10 @@
     --card: #f5f5f7; --border: #e2e2e5;
     --urgent: #c0392b; --soon: #b9770e; --calm: #1f4e46;
   }
+  /* hidden 속성은 브라우저 기본 스타일(display:none)로 동작하는데, 작성자 CSS가 그 요소에
+     display를 지정하면 그쪽이 이겨서 감춰지지 않는다. 실제로 오류 배너가 display:flex 때문에
+     늘 보이고 있었다. 감춤은 항상 이 규칙이 이기게 못박는다. */
+  [hidden] { display: none !important; }
   * { box-sizing: border-box; }
   body {
     margin: 0;
