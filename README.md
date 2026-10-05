@@ -43,7 +43,7 @@
   `supportConditions`) 중 주거 관련만 추려 `docs/data/subsidy.json`
 - `docs/index.html` — 단일 파일 정적 페이지. 지원금 데이터가 수백 KB라 그 탭을
   처음 열 때만 받는다
-- `.github/workflows/update.yml` — 매일 06:20 KST 테스트 → 수집 → 커밋 → Pages 배포.
+- `.github/workflows/update.yml` — 매일 06:20 KST 테스트 → 수집 → 프리렌더 → 테스트 → 커밋 → Pages 배포.
   수집이 깨진 채로 돌면 커밋된 데이터를 덮어쓴 뒤에야 알게 되므로 받아오기 전에 테스트한다
 - `.github/workflows/test.yml` — 푸시·PR마다 `npm test`
 
